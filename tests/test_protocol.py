@@ -6,8 +6,6 @@ exercises the parser and command builder.
 """
 from __future__ import annotations
 
-import pytest
-
 from diesel_heater_ble import (
     HeaterProtocol,
     ProtocolAA55,
