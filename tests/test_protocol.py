@@ -1933,3 +1933,41 @@ class TestProtocolHcalory:
         assert self.proto._to_bcd(59) == 0x59
         assert self.proto._to_bcd(0) == 0x00
         assert self.proto._to_bcd(99) == 0x99
+
+    def test_password_handshake_exact_payload(self):
+        """Verify exact password payload format: 01 D1 D2 D3 D4 (5 bytes)."""
+        pkt = self.proto.build_password_handshake(1234)
+        hex_str = pkt.hex()
+        # The payload should be 01 01 02 03 04 (5 bytes)
+        # After header (00 02 00 01 00 01 00 0a 0c 00 00 05) which is 12 bytes
+        # Payload starts at byte 12
+        assert pkt[12] == 0x01  # Command type byte
+        assert pkt[13] == 0x01  # Digit 1
+        assert pkt[14] == 0x02  # Digit 2
+        assert pkt[15] == 0x03  # Digit 3
+        assert pkt[16] == 0x04  # Digit 4
+        # Length field should be 5
+        assert pkt[11] == 0x05
+
+    def test_password_handshake_pin_0000(self):
+        """Password handshake with PIN 0000 should match working integration format."""
+        pkt = self.proto.build_password_handshake(0)
+        # Expected payload: 01 00 00 00 00
+        assert pkt[12] == 0x01  # Command type byte
+        assert pkt[13] == 0x00  # Digit 0
+        assert pkt[14] == 0x00  # Digit 0
+        assert pkt[15] == 0x00  # Digit 0
+        assert pkt[16] == 0x00  # Digit 0
+        # Verify checksum
+        expected_sum = sum(pkt[:-1]) & 0xFF
+        assert pkt[-1] == expected_sum
+
+    def test_mvp1_query_explicit(self):
+        """Test explicit MVP1 query command for fallback."""
+        pkt = self.proto.build_mvp1_query()
+        hex_str = pkt.hex()
+        # Should contain dpID 0E04 (MVP1 query)
+        assert "0e04" in hex_str.lower()
+        # Should have header
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02

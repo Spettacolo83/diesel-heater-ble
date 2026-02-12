@@ -1317,14 +1317,31 @@ class ProtocolHcalory(HeaterProtocol):
 
         return packet
 
+    def build_mvp1_query(self) -> bytearray:
+        """Build MVP1-style query command (dpID 0E04).
+
+        Some bd39-service devices (like some HBU1S firmware versions)
+        respond to MVP1 query format instead of MVP2 (0A0A).
+
+        This can be used as a fallback if MVP2 query times out.
+
+        Returns:
+            MVP1 query command packet
+        """
+        return self._build_hcalory_cmd(
+            HCALORY_CMD_POWER,
+            bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_QUERY])
+        )
+
     def build_password_handshake(self, passkey: int = 1234) -> bytearray:
         """Build MVP2 password handshake command.
 
         MVP2 requires password authentication before accepting commands.
-        dpID 0A0C with payload: 05 01 [D1] [D2] [D3] [D4]
+        dpID 0A0C with payload: 01 [D1] [D2] [D3] [D4] (5 bytes)
 
-        Password encoding: each digit as separate byte with leading zero
-        Example: "1234" -> 01 02 03 04
+        Password encoding: each digit as separate byte
+        Example: PIN "1234" -> 01 01 02 03 04
+        Example: PIN "0000" -> 01 00 00 00 00
 
         Args:
             passkey: 4-digit PIN code (default 1234)
@@ -1339,8 +1356,9 @@ class ProtocolHcalory(HeaterProtocol):
             digits.insert(0, pk % 10)
             pk //= 10
 
-        # Build payload: 05 01 D1 D2 D3 D4
-        payload = bytes([0x05, 0x01] + digits)
+        # Build payload: 01 D1 D2 D3 D4 (5 bytes)
+        # The 01 is a command type byte, followed by 4 PIN digits
+        payload = bytes([0x01] + digits)
 
         # Build packet
         packet = bytearray([
