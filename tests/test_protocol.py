@@ -1867,9 +1867,10 @@ class TestProtocolHcalory:
         expected_checksum = sum(pkt[:-1]) & 0xFF
         assert pkt[-1] == expected_checksum
 
-    def test_mvp2_query_uses_0a0a_dpid(self):
-        """MVP2 status query should use dpID 0A0A with timestamp."""
+    def test_mvp2_query_uses_0a0a_dpid_when_explicitly_requested(self):
+        """MVP2 status query uses dpID 0A0A with timestamp when prefer_mvp1=False."""
         self.proto.set_mvp_version(True)
+        self.proto.set_prefer_mvp1_query(False)  # Explicitly request MVP2 query
         pkt = self.proto.build_command(0, 0, 1234)
         # Should contain dpID 0A0A
         assert 0x0A in pkt
@@ -1970,3 +1971,46 @@ class TestProtocolHcalory:
         # Should have header
         assert pkt[0] == 0x00
         assert pkt[1] == 0x02
+
+    def test_mvp1_query_is_default_for_mvp2_devices(self):
+        """MVP2 devices should use MVP1 query by default (proven to work by Acropolis9064)."""
+        self.proto.set_mvp_version(True)  # Set as MVP2 device
+        # Default should prefer MVP1 query
+        assert self.proto.prefer_mvp1_query is True
+        # Status query should use 0E04 (MVP1) even for MVP2 device
+        pkt = self.proto.build_command(0, 0, 1234)
+        hex_str = pkt.hex()
+        assert "0e04" in hex_str.lower()
+        assert "0a0a" not in hex_str.lower()
+
+    def test_prefer_mvp1_query_setter(self):
+        """Test MVP1 query preference setter."""
+        self.proto.set_mvp_version(True)
+        # Default is True
+        assert self.proto.prefer_mvp1_query is True
+        # Set to False
+        self.proto.set_prefer_mvp1_query(False)
+        assert self.proto.prefer_mvp1_query is False
+        # Set back to True
+        self.proto.set_prefer_mvp1_query(True)
+        assert self.proto.prefer_mvp1_query is True
+
+    def test_mvp2_query_when_prefer_mvp1_disabled(self):
+        """MVP2 query (0A0A) should be used when prefer_mvp1_query is False."""
+        self.proto.set_mvp_version(True)
+        self.proto.set_prefer_mvp1_query(False)
+        pkt = self.proto.build_command(0, 0, 1234)
+        hex_str = pkt.hex()
+        # Should use MVP2 query (0A0A)
+        assert "0a0a" in hex_str.lower()
+        assert "0e04" not in hex_str.lower()
+
+    def test_mvp1_only_device_uses_mvp1_query(self):
+        """MVP1-only devices (not MVP2) should always use MVP1 query."""
+        self.proto.set_mvp_version(False)  # MVP1 device
+        # Regardless of preference, MVP1 device uses MVP1 query
+        self.proto.set_prefer_mvp1_query(False)  # This shouldn't matter
+        pkt = self.proto.build_command(0, 0, 1234)
+        hex_str = pkt.hex()
+        assert "0e04" in hex_str.lower()
+        assert "0a0a" not in hex_str.lower()

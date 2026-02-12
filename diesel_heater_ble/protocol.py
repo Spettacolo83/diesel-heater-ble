@@ -917,11 +917,30 @@ class ProtocolHcalory(HeaterProtocol):
         """Initialize Hcalory protocol handler."""
         self._is_mvp2: bool = True  # Default to MVP2, can be set by coordinator
         self._password_sent: bool = False  # Track if MVP2 password handshake was sent
+        # Use MVP1-style query by default, even for bd39 devices.
+        # The working Acropolis9064 integration proves this works for HBU1S.
+        # Password handshake still uses MVP2 format for bd39.
+        self._prefer_mvp1_query: bool = True
 
     def set_mvp_version(self, is_mvp2: bool) -> None:
         """Set MVP version (MVP1 vs MVP2) based on service UUID detection."""
         self._is_mvp2 = is_mvp2
         self._password_sent = False  # Reset password state on version change
+
+    def set_prefer_mvp1_query(self, prefer_mvp1: bool) -> None:
+        """Set query preference for MVP1 vs MVP2 style.
+
+        By default, MVP1 query (dpID 0E04) is preferred even for bd39 devices
+        because the working Acropolis9064 integration proves this works.
+
+        Set to False to use MVP2 query (dpID 0A0A with timestamp).
+        """
+        self._prefer_mvp1_query = prefer_mvp1
+
+    @property
+    def prefer_mvp1_query(self) -> bool:
+        """Check if MVP1 query style is preferred."""
+        return self._prefer_mvp1_query
 
     def reset_password_state(self) -> None:
         """Reset password handshake state (call on reconnect)."""
@@ -1157,13 +1176,15 @@ class ProtocolHcalory(HeaterProtocol):
         - MVP1: Uses dpID 0E04 for query with 9-byte payload
         - MVP2: Uses dpID 0A0A for query with timestamp payload
         """
-        # Status request - different for MVP1 vs MVP2
+        # Status request - prefer MVP1 query unless explicitly set to use MVP2
+        # The working Acropolis9064 integration uses MVP1 (0E04) for HBU1S,
+        # so we default to MVP1 even for bd39 (MVP2) devices.
         if command in (0, 1):
-            if self._is_mvp2:
-                # MVP2: Use 0A0A with timestamp
+            if self._is_mvp2 and not self._prefer_mvp1_query:
+                # MVP2: Use 0A0A with timestamp (only if explicitly requested)
                 return self._build_mvp2_query_cmd()
             else:
-                # MVP1: Use 0E04 with query byte
+                # MVP1: Use 0E04 with query byte (default)
                 return self._build_hcalory_cmd(
                     HCALORY_CMD_POWER,
                     bytes([0, 0, 0, 0, 0, 0, 0, 0, HCALORY_POWER_QUERY])
