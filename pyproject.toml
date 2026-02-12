@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "diesel-heater-ble"
-version = "0.1.1"
+version = "0.2.3"
 description = "BLE protocol library for diesel heaters (Vevor, Hcalory, Sunster, HeaterCC)"
 readme = "README.md"
 license = {text = "MIT"}
@@ -53,6 +53,7 @@ Issues = "https://github.com/Spettacolo83/diesel-heater-ble/issues"
 Changelog = "https://github.com/Spettacolo83/diesel-heater-ble/releases"
 
 [tool.setuptools.packages.find]
+where = ["."]
 include = ["diesel_heater_ble*"]
 
 [tool.setuptools.package-data]
@@ -67,8 +68,7 @@ target-version = "py310"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "UP", "B", "SIM"]
-# Note: "I" (isort) disabled - import order not critical for library
+select = ["E", "F", "W", "UP", "B", "SIM", "I"]
 
 [tool.mypy]
 python_version = "3.10"

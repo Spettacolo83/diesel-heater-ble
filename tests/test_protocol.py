@@ -6,6 +6,8 @@ exercises the parser and command builder.
 """
 from __future__ import annotations
 
+import pytest
+
 from diesel_heater_ble import (
     HeaterProtocol,
     ProtocolAA55,
@@ -14,6 +16,7 @@ from diesel_heater_ble import (
     ProtocolAA66Encrypted,
     ProtocolABBA,
     ProtocolCBFF,
+    ProtocolHcalory,
     VevorCommandMixin,
     _decrypt_data,
     _encrypt_data,
@@ -1294,71 +1297,643 @@ class TestProtocolCBFF:
         assert "cab_temperature" not in result
         assert "supply_voltage" not in result
 
-    def test_build_command_uses_feaa(self):
-        """CBFF uses FEAA command format (not AA55)."""
+    # --- FEAA command building ---
+
+    def test_build_command_status_request(self):
+        """Status request uses FEAA format with cmd_1=0x80, cmd_2=0x00."""
         pkt = self.proto.build_command(1, 0, 1234)
         assert pkt[0] == 0xFE
         assert pkt[1] == 0xAA
-        # FEAA format: header(2) + version_num(1) + package_num(1) + length(2) + cmd_1(1) + cmd_2(1) + checksum(1) = 9
-        assert len(pkt) == 9
-
-    def test_feaa_status_request(self):
-        """FEAA status request uses cmd_1=0x80, cmd_2=0x00."""
-        pkt = self.proto.build_command(0, 0, 1234)
-        assert pkt[0:2] == bytes([0xFE, 0xAA])
-        assert pkt[6] == 0x80  # cmd_1 = status request
-        assert pkt[7] == 0x00  # cmd_2 = read
-        # Verify checksum (sum of all bytes except last)
+        assert pkt[6] == 0x80  # cmd_1 (status query)
+        assert pkt[7] == 0x00  # cmd_2 (read)
+        # Checksum is sum of all previous bytes & 0xFF
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
-    def test_feaa_power_on(self):
-        """FEAA power on uses cmd_1=0x81, cmd_2=0x03, payload=1."""
-        pkt = self.proto.build_command(3, 1, 1234)  # cmd 3, arg 1 = power on
-        assert pkt[0:2] == bytes([0xFE, 0xAA])
-        assert pkt[6] == 0x81  # cmd_1 = set power
-        assert pkt[7] == 0x03  # cmd_2 = command with payload
-        assert pkt[8] == 1    # payload = on
+    def test_build_command_power_on(self):
+        """Power on uses FEAA with cmd_1=0x81, cmd_2=0x03, payload=1."""
+        pkt = self.proto.build_command(3, 1, 1234)  # cmd=3 (power), arg=1 (on)
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # cmd_1 (power command)
+        assert pkt[7] == 0x03  # cmd_2 (with payload)
+        assert pkt[8] == 0x01  # payload: on
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
-    def test_feaa_power_off(self):
-        """FEAA power off uses cmd_1=0x81, cmd_2=0x03, payload=0."""
-        pkt = self.proto.build_command(3, 0, 1234)  # cmd 3, arg 0 = power off
-        assert pkt[0:2] == bytes([0xFE, 0xAA])
-        assert pkt[6] == 0x81  # cmd_1 = set power
-        assert pkt[7] == 0x03  # cmd_2 = command with payload
-        assert pkt[8] == 0    # payload = off
+    def test_build_command_power_off(self):
+        """Power off uses FEAA with cmd_1=0x81, cmd_2=0x03, payload=0."""
+        pkt = self.proto.build_command(3, 0, 1234)  # cmd=3 (power), arg=0 (off)
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # cmd_1 (power command)
+        assert pkt[7] == 0x03  # cmd_2 (with payload)
+        assert pkt[8] == 0x00  # payload: off
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
-    def test_feaa_set_temperature(self):
-        """FEAA set temperature uses cmd_1=0x81, cmd_2=0x03, payload=[mode, temp]."""
-        pkt = self.proto.build_command(4, 25, 1234)  # cmd 4, arg 25 = set temp 25C
-        assert pkt[0:2] == bytes([0xFE, 0xAA])
-        assert pkt[6] == 0x81  # cmd_1 = control command
-        assert pkt[7] == 0x03  # cmd_2 = command with payload
-        assert pkt[8] == 2    # running_mode = temperature mode
-        assert pkt[9] == 25   # temperature
+    def test_build_command_set_temperature(self):
+        """Set temperature uses FEAA with cmd_1=0x81, payload=[2, temp]."""
+        pkt = self.proto.build_command(4, 25, 1234)  # cmd=4 (set temp), arg=25
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # cmd_1 (control command)
+        assert pkt[7] == 0x03  # cmd_2 (with payload)
+        assert pkt[8] == 0x02  # run_mode: temperature
+        assert pkt[9] == 25    # run_param: temperature value
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
-    def test_feaa_set_level(self):
-        """FEAA set level uses cmd_1=0x81, cmd_2=0x03, payload=[mode, level]."""
-        pkt = self.proto.build_command(5, 5, 1234)  # cmd 5, arg 5 = set level 5
-        assert pkt[0:2] == bytes([0xFE, 0xAA])
-        assert pkt[6] == 0x81  # cmd_1 = control command
-        assert pkt[7] == 0x03  # cmd_2 = command with payload
-        assert pkt[8] == 1    # running_mode = level mode
-        assert pkt[9] == 5    # level
+    def test_build_command_set_level(self):
+        """Set level uses FEAA with cmd_1=0x81, payload=[1, level]."""
+        pkt = self.proto.build_command(5, 7, 1234)  # cmd=5 (set level), arg=7
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # cmd_1 (control command)
+        assert pkt[7] == 0x03  # cmd_2 (with payload)
+        assert pkt[8] == 0x01  # run_mode: level
+        assert pkt[9] == 7     # run_param: level value
         assert pkt[-1] == sum(pkt[:-1]) & 0xFF
 
-    def test_feaa_config_fallback_to_aa55(self):
-        """FEAA config commands fall back to AA55 for compatibility."""
-        # Set offset (cmd 14) should use AA55 fallback
-        pkt = self.proto.build_command(14, 2, 1234)
-        assert pkt[0:2] == bytes([0xAA, 0x55])
-        assert len(pkt) == 8
+    def test_build_command_set_mode(self):
+        """Set mode uses FEAA with cmd_1=0x81, cmd_2=0x02."""
+        pkt = self.proto.build_command(2, 1, 1234)
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # cmd_1 (control command)
+        assert pkt[7] == 0x02  # cmd_2 (without payload)
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_config_uses_aa55_fallback(self):
+        """Config commands (14-21) fall back to AA55 format."""
+        for cmd in (14, 15, 16, 17, 19, 20, 21):
+            pkt = self.proto.build_command(cmd, 0, 1234)
+            assert pkt[0] == 0xAA
+            assert pkt[1] == 0x55
+            assert len(pkt) == 8
+
+    def test_build_command_unknown_defaults_to_status(self):
+        """Unknown command defaults to status request."""
+        pkt = self.proto.build_command(99, 0, 1234)
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x80  # status query
+        assert pkt[7] == 0x00  # read
+
+    def test_feaa_packet_length_field(self):
+        """FEAA packet length field is correct (uint16 LE)."""
+        pkt = self.proto.build_command(1, 0, 1234)  # status request (9 bytes)
+        # Length field is bytes 4-5 (LE), should be 9
+        length = pkt[4] | (pkt[5] << 8)
+        assert length == len(pkt)
+
+    def test_feaa_checksum_calculation(self):
+        """Verify FEAA checksum is sum of all previous bytes & 0xFF."""
+        pkt = self.proto.build_command(3, 1, 1234)  # power on
+        expected_checksum = sum(pkt[:-1]) & 0xFF
+        assert pkt[-1] == expected_checksum
 
     def test_is_heater_protocol(self):
         assert isinstance(self.proto, HeaterProtocol)
 
-    def test_is_not_vevor_command_mixin(self):
-        """CBFF no longer inherits VevorCommandMixin - uses FEAA directly."""
+    def test_not_vevor_command_mixin(self):
+        """CBFF no longer uses VevorCommandMixin (uses FEAA instead)."""
         assert not isinstance(self.proto, VevorCommandMixin)
+
+    # -----------------------------------------------------------------------
+    # V2.1 Encrypted Mode Tests
+    # -----------------------------------------------------------------------
+
+    def test_v21_mode_default_false(self):
+        """V2.1 mode is disabled by default."""
+        assert self.proto.v21_mode is False
+
+    def test_set_v21_mode(self):
+        """Can enable and disable V2.1 mode."""
+        self.proto.set_v21_mode(True)
+        assert self.proto.v21_mode is True
+        self.proto.set_v21_mode(False)
+        assert self.proto.v21_mode is False
+
+    def test_build_handshake_basic(self):
+        """Handshake command builds correctly."""
+        self.proto.set_device_sn("E466E5BC086D")
+        pkt = self.proto.build_handshake(1234)
+        # Handshake is always encrypted, so we can't check raw bytes
+        # Just verify it's a bytearray with reasonable length
+        assert isinstance(pkt, bytearray)
+        assert len(pkt) > 8  # At least header + payload + checksum
+
+    def test_build_handshake_pin_encoding(self):
+        """Handshake PIN is encoded as [PIN % 100, PIN // 100]."""
+        # Build unencrypted handshake (no device_sn)
+        proto = ProtocolCBFF()
+        pkt = proto.build_handshake(1234)  # Should be [34, 12]
+        # Without encryption, we can verify the payload
+        # Packet: FEAA + ver + pkg + len(2) + cmd1(0x86) + cmd2(0x00) + payload(2) + checksum
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x86  # CMD1 for password/handshake
+        assert pkt[7] == 0x00  # CMD2
+        assert pkt[8] == 34    # 1234 % 100
+        assert pkt[9] == 12    # 1234 // 100
+
+    def test_v21_encrypt_decrypt_roundtrip(self):
+        """Double-XOR encryption/decryption is symmetric."""
+        device_sn = "E466E5BC086D"
+        original = bytearray([0xFE, 0xAA, 0x00, 0x00, 0x09, 0x00, 0x80, 0x00, 0x27])
+        encrypted = ProtocolCBFF._encrypt_cbff(original, device_sn)
+        decrypted = ProtocolCBFF._decrypt_cbff(encrypted, device_sn)
+        assert decrypted == original
+
+    def test_v21_known_power_off_encryption(self):
+        """Verify Power OFF encryption matches @Xev's documented example.
+
+        From documentation:
+        Raw:       FE AA 00 00 09 00 01 00 B8
+        Encrypted: CB FF 45 45 3B 5A 31 27 C9
+        """
+        device_sn = "E466E5BC086D"
+        raw = bytearray([0xFE, 0xAA, 0x00, 0x00, 0x09, 0x00, 0x01, 0x00, 0xB8])
+        encrypted = ProtocolCBFF._encrypt_cbff(raw, device_sn)
+        expected = bytearray([0xCB, 0xFF, 0x45, 0x45, 0x3B, 0x5A, 0x31, 0x27, 0xC9])
+        assert encrypted == expected
+
+    def test_v21_command_encrypted_when_enabled(self):
+        """Commands are encrypted when V2.1 mode is enabled."""
+        self.proto.set_device_sn("E466E5BC086D")
+        self.proto.set_v21_mode(False)
+        unencrypted = self.proto.build_command(0, 0, 1234)  # Status request
+
+        self.proto.set_v21_mode(True)
+        encrypted = self.proto.build_command(0, 0, 1234)
+
+        # Encrypted packet should be different
+        assert encrypted != unencrypted
+        # Header should be encrypted (not FEAA anymore)
+        assert encrypted[:2] != bytearray([0xFE, 0xAA])
+
+    def test_v21_power_on_with_payload(self):
+        """V2.1 Power ON includes mode/param/time payload."""
+        proto = ProtocolCBFF()
+        proto.set_v21_mode(True)
+        # Without device_sn, we can see the unencrypted structure
+        pkt = proto.build_command(3, 1, 1234)  # Power ON
+
+        # Check packet structure (before encryption, since no device_sn)
+        assert pkt[0] == 0xFE
+        assert pkt[1] == 0xAA
+        assert pkt[6] == 0x81  # CMD1 for control
+        assert pkt[7] == 0x01  # CMD2 for power on
+        # Payload: [mode, param, time_l, time_h] = [1, 5, 0xFF, 0xFF]
+        assert pkt[8] == 1     # run_mode (level)
+        assert pkt[9] == 5     # run_param (level 5)
+        assert pkt[10] == 0xFF # remain_time low
+        assert pkt[11] == 0xFF # remain_time high
+
+    def test_v21_power_off_no_payload(self):
+        """V2.1 Power OFF is a simple command without payload."""
+        proto = ProtocolCBFF()
+        proto.set_v21_mode(True)
+        pkt = proto.build_command(3, 0, 1234)  # Power OFF
+
+        assert pkt[6] == 0x81  # CMD1 for control
+        assert pkt[7] == 0x00  # CMD2 for power off
+        # Length should be 9 bytes (no payload)
+        length = pkt[4] | (pkt[5] << 8)
+        assert length == 9
+
+    def test_v21_set_temperature_with_payload(self):
+        """V2.1 set temperature includes mode/param/time payload."""
+        proto = ProtocolCBFF()
+        proto.set_v21_mode(True)
+        pkt = proto.build_command(4, 25, 1234)  # Set temp to 25°C
+
+        assert pkt[8] == 2     # run_mode (temperature)
+        assert pkt[9] == 25    # run_param (25°C)
+        assert pkt[10] == 0xFF # remain_time low
+        assert pkt[11] == 0xFF # remain_time high
+
+    def test_v21_set_level_with_payload(self):
+        """V2.1 set level includes mode/param/time payload."""
+        proto = ProtocolCBFF()
+        proto.set_v21_mode(True)
+        pkt = proto.build_command(5, 7, 1234)  # Set level 7
+
+        assert pkt[8] == 1     # run_mode (level)
+        assert pkt[9] == 7     # run_param (level 7)
+        assert pkt[10] == 0xFF # remain_time low
+        assert pkt[11] == 0xFF # remain_time high
+
+
+# ---------------------------------------------------------------------------
+# ProtocolHcalory (mode=7, MVP1/MVP2, variable length)
+# ---------------------------------------------------------------------------
+
+def _make_hcalory_response(
+    device_state=0x00,  # 0=standby, 1=temp, 2=gear, 3=fan, FF=fault
+    temp_or_gear=20,
+    auto_start_stop=0,
+    voltage=124,  # raw value, /10 = 12.4V
+    shell_temp_sign=0,
+    shell_temp=450,  # raw value, /10 = 45.0°C
+    ambient_temp_sign=0,
+    ambient_temp=200,  # raw value, /10 = 20.0°C
+    status_flags=0b00000000,
+    highland_mode=0,
+    temp_unit=0,
+    altitude_unit=0,
+    altitude_sign=0,
+    altitude=0,
+) -> bytearray:
+    """Build a Hcalory response packet.
+
+    Response hex char positions (from protocol docs):
+    - 0-3: device_id (4 chars)
+    - 4-7: timestamp (4 chars)
+    - 8-11: reserved (4 chars)
+    - 12-13: highland_gear (2 chars)
+    - 14-15: reserved (2 chars)
+    - 16-17: status_flags (2 chars)
+    - 18-19: device_state (2 chars)
+    - 20-21: temp_or_gear (2 chars)
+    - 22-23: auto_start_stop (2 chars)
+    - 24-27: voltage_raw (4 chars)
+    - 28-29: shell_temp_sign (2 chars)
+    - 30-33: shell_temp_raw (4 chars)
+    - 34-35: ambient_temp_sign (2 chars)
+    - 36-39: ambient_temp_raw (4 chars)
+    - 40-45: reserved (6 chars)
+    - 46-47: scene_id (2 chars)
+    - 48-49: highland_mode (2 chars)
+    - 50-51: temp_unit (2 chars)
+    MVP2 extended:
+    - 52-53: height_unit (2 chars)
+    - 54-55: altitude_sign (2 chars)
+    - 56-59: altitude_raw (4 chars)
+    """
+    hex_data = ""
+
+    # 0-3: device_id (4 chars)
+    hex_data += "0000"
+    # 4-7: timestamp (4 chars)
+    hex_data += "0000"
+    # 8-11: reserved (4 chars)
+    hex_data += "0000"
+    # 12-13: highland_gear (2 chars)
+    hex_data += "00"
+    # 14-15: reserved (2 chars)
+    hex_data += "00"
+    # 16-17: status_flags (2 chars)
+    hex_data += f"{status_flags:02X}"
+    # 18-19: device_state (2 chars)
+    hex_data += f"{device_state:02X}"
+    # 20-21: temp_or_gear (2 chars)
+    hex_data += f"{temp_or_gear:02X}"
+    # 22-23: auto_start_stop (2 chars)
+    hex_data += f"{auto_start_stop:02X}"
+    # 24-27: voltage_raw (4 chars)
+    hex_data += f"{voltage:04X}"
+    # 28-29: shell_temp_sign (2 chars)
+    hex_data += f"{shell_temp_sign:02X}"
+    # 30-33: shell_temp_raw (4 chars)
+    hex_data += f"{shell_temp:04X}"
+    # 34-35: ambient_temp_sign (2 chars)
+    hex_data += f"{ambient_temp_sign:02X}"
+    # 36-39: ambient_temp_raw (4 chars)
+    hex_data += f"{ambient_temp:04X}"
+    # 40-45: reserved (6 chars)
+    hex_data += "000000"
+    # 46-47: scene_id (2 chars)
+    hex_data += "00"
+    # 48-49: highland_mode (2 chars)
+    hex_data += f"{highland_mode:02X}"
+    # 50-51: temp_unit (2 chars)
+    hex_data += f"{temp_unit:02X}"
+    # 52-53: height_unit (2 chars)
+    hex_data += f"{altitude_unit:02X}"
+    # 54-55: altitude_sign (2 chars)
+    hex_data += f"{altitude_sign:02X}"
+    # 56-59: altitude_raw (4 chars)
+    hex_data += f"{altitude:04X}"
+
+    return bytearray.fromhex(hex_data)
+
+
+class TestProtocolHcalory:
+    """Tests for Hcalory MVP1/MVP2 protocol (mode=7)."""
+
+    def setup_method(self):
+        self.proto = ProtocolHcalory()
+
+    def test_protocol_properties(self):
+        assert self.proto.protocol_mode == 7
+        assert self.proto.name == "Hcalory"
+        assert self.proto.needs_calibration is True
+        assert self.proto.needs_post_status is True
+
+    def test_is_heater_protocol(self):
+        assert isinstance(self.proto, HeaterProtocol)
+
+    def test_not_vevor_command_mixin(self):
+        """Hcalory uses its own command format, not VevorCommandMixin."""
+        assert not isinstance(self.proto, VevorCommandMixin)
+
+    def test_set_mvp_version(self):
+        """Test MVP version setter."""
+        self.proto.set_mvp_version(True)
+        assert self.proto._is_mvp2 is True
+        self.proto.set_mvp_version(False)
+        assert self.proto._is_mvp2 is False
+
+    def test_parse_returns_none_for_short_data(self):
+        """Data shorter than 26 bytes (52 hex chars) returns None."""
+        short_data = bytearray(20)
+        result = self.proto.parse(short_data)
+        assert result is None
+
+    def test_parse_standby_state(self):
+        """Device state 0x00 = standby."""
+        data = _make_hcalory_response(device_state=0x00)
+        result = self.proto.parse(data)
+        assert result is not None
+        assert result.get("connected") is True
+        assert result.get("running_state") == 0
+        assert result.get("hcalory_device_state") == 0x00
+
+    def test_parse_temperature_mode(self):
+        """Device state 0x01 = temperature auto mode."""
+        data = _make_hcalory_response(device_state=0x01, temp_or_gear=25)
+        result = self.proto.parse(data)
+        assert result is not None
+        assert result.get("running_state") == 1
+        assert result.get("running_mode") == 2  # RUNNING_MODE_TEMPERATURE
+        assert result.get("set_temp") == 25
+        assert result.get("hcalory_device_state") == 0x01
+
+    def test_parse_gear_mode(self):
+        """Device state 0x02 = manual gear mode."""
+        data = _make_hcalory_response(device_state=0x02, temp_or_gear=3)
+        result = self.proto.parse(data)
+        assert result is not None
+        assert result.get("running_state") == 1
+        assert result.get("running_mode") == 1  # RUNNING_MODE_LEVEL
+        assert result.get("hcalory_gear") == 3
+        # Gear 3 maps to standard level 5
+        assert result.get("set_level") == 5
+
+    def test_parse_fan_mode(self):
+        """Device state 0x03 = natural wind (fan only)."""
+        data = _make_hcalory_response(device_state=0x03)
+        result = self.proto.parse(data)
+        assert result is not None
+        assert result.get("running_state") == 1
+        assert result.get("running_mode") == 0  # RUNNING_MODE_MANUAL
+
+    def test_parse_fault_state(self):
+        """Device state 0xFF = machine fault."""
+        data = _make_hcalory_response(device_state=0xFF)
+        result = self.proto.parse(data)
+        assert result is not None
+        assert result.get("running_state") == 0
+        assert result.get("hcalory_device_state") == 0xFF
+
+    def test_parse_auto_start_stop(self):
+        """Auto start/stop flag parsing."""
+        data = _make_hcalory_response(auto_start_stop=1)
+        result = self.proto.parse(data)
+        assert result.get("auto_start_stop") is True
+
+        data = _make_hcalory_response(auto_start_stop=0)
+        result = self.proto.parse(data)
+        assert result.get("auto_start_stop") is False
+
+    def test_parse_voltage(self):
+        """Voltage is divided by 10."""
+        data = _make_hcalory_response(voltage=124)
+        result = self.proto.parse(data)
+        assert result.get("supply_voltage") == 12.4
+
+    def test_parse_temperatures(self):
+        """Shell and ambient temps are signed and divided by 10."""
+        data = _make_hcalory_response(
+            shell_temp_sign=0, shell_temp=450,  # +45.0°C
+            ambient_temp_sign=0, ambient_temp=200,  # +20.0°C
+        )
+        result = self.proto.parse(data)
+        assert result.get("case_temperature") == 45.0
+        assert result.get("cab_temperature") == 20.0
+
+    def test_parse_negative_temperatures(self):
+        """Negative temperatures have sign=1."""
+        data = _make_hcalory_response(
+            shell_temp_sign=1, shell_temp=50,  # -5.0°C
+            ambient_temp_sign=1, ambient_temp=100,  # -10.0°C
+        )
+        result = self.proto.parse(data)
+        assert result.get("case_temperature") == -5.0
+        assert result.get("cab_temperature") == -10.0
+
+    def test_parse_temp_unit(self):
+        """Temperature unit: 0=Celsius, 1=Fahrenheit."""
+        data = _make_hcalory_response(temp_unit=0)
+        result = self.proto.parse(data)
+        assert result.get("temp_unit") == 0
+
+        data = _make_hcalory_response(temp_unit=1)
+        result = self.proto.parse(data)
+        assert result.get("temp_unit") == 1
+
+    def test_parse_altitude(self):
+        """Altitude parsing (MVP2 extended)."""
+        data = _make_hcalory_response(
+            altitude_unit=0, altitude_sign=0, altitude=1500
+        )
+        result = self.proto.parse(data)
+        assert result.get("altitude") == 1500
+        assert result.get("altitude_unit") == 0
+
+    def test_gear_level_mapping(self):
+        """Test Hcalory 1-6 to standard 1-10 level mapping."""
+        # Test _map_hcalory_to_standard_level
+        assert self.proto._map_hcalory_to_standard_level(1) == 2
+        assert self.proto._map_hcalory_to_standard_level(2) == 4
+        assert self.proto._map_hcalory_to_standard_level(3) == 5
+        assert self.proto._map_hcalory_to_standard_level(4) == 6
+        assert self.proto._map_hcalory_to_standard_level(5) == 8
+        assert self.proto._map_hcalory_to_standard_level(6) == 10
+
+    def test_standard_to_hcalory_level_mapping(self):
+        """Test standard 1-10 to Hcalory 1-6 level mapping."""
+        # Test _map_standard_to_hcalory_level
+        assert self.proto._map_standard_to_hcalory_level(1) == 1
+        assert self.proto._map_standard_to_hcalory_level(2) == 1
+        assert self.proto._map_standard_to_hcalory_level(3) == 2
+        assert self.proto._map_standard_to_hcalory_level(4) == 2
+        assert self.proto._map_standard_to_hcalory_level(5) == 3
+        assert self.proto._map_standard_to_hcalory_level(6) == 4
+        assert self.proto._map_standard_to_hcalory_level(7) == 5
+        assert self.proto._map_standard_to_hcalory_level(8) == 5
+        assert self.proto._map_standard_to_hcalory_level(9) == 6
+        assert self.proto._map_standard_to_hcalory_level(10) == 6
+
+    # --- Command builder tests ---
+
+    def test_build_command_status_request(self):
+        """Status request (command 0 or 1) uses HCALORY_CMD_POWER."""
+        pkt = self.proto.build_command(1, 0, 1234)
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02  # Protocol ID
+        # Checksum is last byte
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_power_on(self):
+        """Power on (cmd=3, arg=1)."""
+        pkt = self.proto.build_command(3, 1, 1234)
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02  # Protocol ID
+        # Should contain HCALORY_POWER_ON (0x01) in payload
+        assert 0x01 in pkt
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_power_off(self):
+        """Power off (cmd=3, arg=0)."""
+        pkt = self.proto.build_command(3, 0, 1234)
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02  # Protocol ID
+        # Should contain HCALORY_POWER_OFF (0x02) in payload
+        assert 0x02 in pkt
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_set_temperature(self):
+        """Set temperature (cmd=4)."""
+        pkt = self.proto.build_command(4, 25, 1234)
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02
+        # Should contain temperature value in payload
+        assert 25 in pkt
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_set_level(self):
+        """Set level (cmd=5) maps standard 1-10 to Hcalory 1-6."""
+        # Standard level 5 -> Hcalory gear 3
+        pkt = self.proto.build_command(5, 5, 1234)
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02
+        # Should contain mapped gear (3) in payload
+        assert 3 in pkt
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_set_temp_unit_celsius(self):
+        """Set temp unit to Celsius (cmd=15, arg=0)."""
+        pkt = self.proto.build_command(15, 0, 1234)
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02
+        # Should contain HCALORY_POWER_CELSIUS (0x0A)
+        assert 0x0A in pkt
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_set_temp_unit_fahrenheit(self):
+        """Set temp unit to Fahrenheit (cmd=15, arg=1)."""
+        pkt = self.proto.build_command(15, 1, 1234)
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02
+        # Should contain HCALORY_POWER_FAHRENHEIT (0x0B)
+        assert 0x0B in pkt
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_auto_start_stop_on(self):
+        """Enable auto start/stop (cmd=22, arg=1)."""
+        pkt = self.proto.build_command(22, 1, 1234)
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02
+        # Should contain HCALORY_POWER_AUTO_ON (0x03)
+        assert 0x03 in pkt
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_auto_start_stop_off(self):
+        """Disable auto start/stop (cmd=22, arg=0)."""
+        pkt = self.proto.build_command(22, 0, 1234)
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02
+        # Should contain HCALORY_POWER_AUTO_OFF (0x04)
+        assert 0x04 in pkt
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_build_command_unknown_defaults_to_status(self):
+        """Unknown command defaults to status query."""
+        pkt = self.proto.build_command(99, 0, 1234)
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02
+        # Should contain HCALORY_POWER_QUERY (0x00)
+        assert pkt[-1] == sum(pkt[:-1]) & 0xFF
+
+    def test_checksum_calculation(self):
+        """Verify checksum is sum of all previous bytes & 0xFF."""
+        pkt = self.proto.build_command(3, 1, 1234)
+        expected_checksum = sum(pkt[:-1]) & 0xFF
+        assert pkt[-1] == expected_checksum
+
+    def test_mvp2_query_uses_0a0a_dpid(self):
+        """MVP2 status query should use dpID 0A0A with timestamp."""
+        self.proto.set_mvp_version(True)
+        pkt = self.proto.build_command(0, 0, 1234)
+        # Should contain dpID 0A0A
+        assert 0x0A in pkt
+        # Check for 0A 0A sequence (dpID)
+        hex_str = pkt.hex()
+        assert "0a0a" in hex_str.lower()
+
+    def test_mvp1_query_uses_0e04_dpid(self):
+        """MVP1 status query should use dpID 0E04."""
+        self.proto.set_mvp_version(False)
+        pkt = self.proto.build_command(0, 0, 1234)
+        # Should contain dpID 0E04
+        hex_str = pkt.hex()
+        assert "0e04" in hex_str.lower()
+
+    def test_password_handshake_packet_structure(self):
+        """MVP2 password handshake should use dpID 0A0C."""
+        pkt = self.proto.build_password_handshake(1234)
+        # Check header
+        assert pkt[0] == 0x00
+        assert pkt[1] == 0x02
+        # Check dpID 0A0C
+        hex_str = pkt.hex()
+        assert "0a0c" in hex_str.lower()
+        # Check password encoding (1234 -> 01 02 03 04)
+        assert 0x01 in pkt
+        assert 0x02 in pkt
+        assert 0x03 in pkt
+        assert 0x04 in pkt
+
+    def test_password_handshake_custom_pin(self):
+        """Password handshake with custom PIN."""
+        pkt = self.proto.build_password_handshake(5678)
+        hex_str = pkt.hex()
+        # PIN 5678 -> digits 5, 6, 7, 8
+        assert 0x05 in pkt
+        assert 0x06 in pkt
+        assert 0x07 in pkt
+        assert 0x08 in pkt
+
+    def test_password_state_tracking(self):
+        """Test password handshake state tracking."""
+        self.proto.set_mvp_version(True)
+        # Initially needs password
+        assert self.proto.needs_password_handshake is True
+        # Mark as sent
+        self.proto.mark_password_sent()
+        assert self.proto.needs_password_handshake is False
+        # Reset state
+        self.proto.reset_password_state()
+        assert self.proto.needs_password_handshake is True
+
+    def test_mvp1_does_not_need_password(self):
+        """MVP1 should not require password handshake."""
+        self.proto.set_mvp_version(False)
+        assert self.proto.needs_password_handshake is False
+
+    def test_bcd_encoding(self):
+        """Test BCD encoding helper."""
+        # 12 in BCD is 0x12 (not 0x0C)
+        assert self.proto._to_bcd(12) == 0x12
+        assert self.proto._to_bcd(59) == 0x59
+        assert self.proto._to_bcd(0) == 0x00
+        assert self.proto._to_bcd(99) == 0x99
