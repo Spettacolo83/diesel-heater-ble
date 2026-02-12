@@ -1937,7 +1937,6 @@ class TestProtocolHcalory:
     def test_password_handshake_exact_payload(self):
         """Verify exact password payload format: 01 D1 D2 D3 D4 (5 bytes)."""
         pkt = self.proto.build_password_handshake(1234)
-        hex_str = pkt.hex()
         # The payload should be 01 01 02 03 04 (5 bytes)
         # After header (00 02 00 01 00 01 00 0a 0c 00 00 05) which is 12 bytes
         # Payload starts at byte 12
